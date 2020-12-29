@@ -9,7 +9,6 @@ use std::process::Command;
 #[tokio::main]
 async fn main() {
     teloxide::enable_logging!();
-    log::info!("Starting dices_bot...");
 
     let bot = Bot::from_env();
 
