@@ -1,9 +1,8 @@
-use reqwest;
 use teloxide::prelude::*;
+use tokio::fs::File;
 
 use std::env;
-use std::fs::{File, remove_file};
-use std::io::Write;
+use std::fs::remove_file;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -41,19 +40,11 @@ async fn save_image(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let photo_path = message.bot.get_file(photo_id).send().await?.file_path;
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-
-    let bytes_image = reqwest::get(&format!(
-        "https://api.telegram.org/file/bot{}/{}",
-        env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN env variable missing"),
-        photo_path
-    ))
-    .await?
-    .bytes()
-    .await?;
-
     let image_name = format!("image-{}", timestamp);
-    let mut file = File::create(&image_name)?;
-    file.write_all(&bytes_image)?;
+    let mut file = File::create(&image_name).await?;
+
+    message.bot.download_file(&photo_path, &mut file).await?;
+
     Ok(image_name)
 }
 
