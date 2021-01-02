@@ -1,37 +1,84 @@
+mod config;
+mod error;
+
+use config::Config;
+use error::is_error;
+use lazy_static::lazy_static;
 use teloxide::prelude::*;
+use teloxide::BotBuilder;
+use teloxide::KnownApiErrorKind;
 use tokio::fs::File;
 
 use std::env;
 use std::fs::remove_file;
+use std::process::exit;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+lazy_static! {
+    static ref CONFIG: Arc<Config> = Arc::new({
+        match config::read_config() {
+            Ok(conf) => conf,
+            Err(e) => {
+                eprintln!("Error reading config file: {}", e);
+                exit(1)
+            }
+        }
+    });
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     teloxide::enable_logging!();
 
-    let bot = Bot::from_env();
+    let bot = if let Some(token) = &CONFIG.token {
+        BotBuilder::new().token(token).build()
+    } else {
+        Bot::from_env()
+    };
 
     teloxide::repl(bot, |message| async move {
         let chat = &message.update.chat;
-        if chat.is_channel() || chat.is_private() {
+        let bot = &message.bot;
+        let config = Arc::clone(&CONFIG);
+
+        if chat.is_channel() || chat.is_private() || !config.is_chat_legit(chat) {
             return ResponseResult::<()>::Ok(());
         }
+
         let photo_id = match &message.update.photo() {
             Some(photos) => &photos.last().unwrap().file_id,
             None => return ResponseResult::<()>::Ok(()),
         };
 
         let image_name = save_image(&message, photo_id).await.unwrap();
-        let scam = scam_test(image_name).unwrap();
+        let scam = scam_test(image_name, &config).unwrap();
 
         if scam {
-            message.delete_message().send().await?;
+            if is_error(
+                message.delete_message().send().await,
+                KnownApiErrorKind::MessageCantBeDeleted,
+            ) {
+                message
+                    .reply_to("I can't delete this photo\nI don't have enough rights.")
+                    .send()
+                    .await
+                    .unwrap();
+            } else {
+                if let Some(log_id) = config.get_log_id(chat) {
+                    bot.send_message(log_id, "Removed scam from group")
+                        .send()
+                        .await?;
+                }
+            }
         }
-        
+
         ResponseResult::<()>::Ok(())
     })
     .await;
+
+    Ok(())
 }
 
 async fn save_image(
@@ -48,7 +95,7 @@ async fn save_image(
     Ok(image_name)
 }
 
-fn scam_test(image_name: String) -> Result<bool, Box<dyn std::error::Error>> {
+fn scam_test(image_name: String, config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
     let text = String::from_utf8(
         Command::new("tesseract")
             .args(&[&image_name, "-"])
@@ -57,5 +104,10 @@ fn scam_test(image_name: String) -> Result<bool, Box<dyn std::error::Error>> {
     )?;
 
     remove_file(image_name)?;
-    Ok(text.contains("bitcoin") && text.contains("blockchain") && text.contains("giveaway"))
+    Ok(config.keywords_groups.iter().any(|keywords_group| {
+        keywords_group
+            .keywords
+            .iter()
+            .all(|keyword| text.contains(keyword))
+    }))
 }

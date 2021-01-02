@@ -15,3 +15,7 @@ pretty_env_logger = "0.4.0"
 
 tokio = { version =  "0.2.11", features = ["rt-threaded", "macros"] }
 reqwest = "0.10.10"
+toml = "0.5.8"
+serde_derive = "1.0.118"
+serde = "1.0.118"
+lazy_static = "1.4.0"
