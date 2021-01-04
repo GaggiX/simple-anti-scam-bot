@@ -1,4 +1,4 @@
-# simple-anti-scam-bot
+# Anti-scam bot
 
 This bot can automatically remove scam images from your supergroup Telegram chat.
 
