@@ -2,7 +2,7 @@ mod config;
 mod error;
 
 use config::Config;
-use error::is_error;
+use error::handle_error;
 use lazy_static::lazy_static;
 use teloxide::prelude::*;
 use teloxide::BotBuilder;
@@ -56,21 +56,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scam = scam_test(image_name, &config).unwrap();
 
         if scam {
-            if is_error(
-                message.delete_message().send().await,
+            handle_error(
+                message.delete_message(),
                 KnownApiErrorKind::MessageCantBeDeleted,
-            ) {
-                message
-                    .reply_to("I can't delete this photo\nI don't have enough rights.")
+                message.reply_to("I can't delete this photo\nI don't have enough rights."),
+            )
+            .await;
+
+            if let Some(log_id) = config.get_log_id(chat) {
+                bot.send_message(log_id, "Removed scam from group")
                     .send()
+                    .await?;
+            }
+
+            match config.get_group_action(chat).or(config.default_action) {
+                Some(config::Action::Kick) => {
+                    handle_error(
+                        bot.unban_chat_member(chat.id, message.update.from().unwrap().id),
+                        KnownApiErrorKind::NotEnoughRightsToRestrict,
+                        bot.send_message(
+                            chat.id,
+                            "I can't kick the user\nI don't have enough rights.",
+                        ),
+                    )
                     .await
-                    .unwrap();
-            } else {
-                if let Some(log_id) = config.get_log_id(chat) {
-                    bot.send_message(log_id, "Removed scam from group")
-                        .send()
-                        .await?;
                 }
+                Some(config::Action::Ban) => {
+                    handle_error(
+                        bot.kick_chat_member(chat.id, message.update.from().unwrap().id),
+                        KnownApiErrorKind::NotEnoughRightsToRestrict,
+                        bot.send_message(
+                            chat.id,
+                            "I can't ban the user\nI don't have enough rights.",
+                        ),
+                    )
+                    .await
+                }
+                Some(config::Action::Ignore) | None => (),
             }
         }
 
@@ -101,7 +123,8 @@ fn scam_test(image_name: String, config: &Config) -> Result<bool, Box<dyn std::e
             .args(&[&image_name, "-"])
             .output()?
             .stdout,
-    )?;
+    )?
+    .to_lowercase();
 
     remove_file(image_name)?;
     Ok(config.keywords_groups.iter().any(|keywords_group| {
